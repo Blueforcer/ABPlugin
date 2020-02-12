@@ -14,10 +14,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.concurrent.Executors;
+//import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+//import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -25,34 +25,39 @@ import anywheresoftware.b4a.BA;
 import anywheresoftware.b4a.BA.Author;
 import anywheresoftware.b4a.BA.DesignerName;
 import anywheresoftware.b4a.BA.Events;
+import anywheresoftware.b4a.BA.RaisesSynchronousEvents;
 import anywheresoftware.b4a.BA.ShortName;
 import anywheresoftware.b4a.BA.Version;
 
-@DesignerName("Build 20160528")                                    
-@Version(1.00F)                                
+@DesignerName("Build 20200210")                                    
+@Version(1.26F)                                
 @Author("Alain Bailleul")
 @ShortName("ABPlugin") 
-@Events(values={"PluginsChanged()"})
+@Events(values={"PluginsChanged()", "ForeignKeyFound(Name as String)"})
 public class ABPlugin {	
 	protected BA _ba;
 	protected String _event;
 	private String pluginsDir;
 	private Map<String, ABPluginDefinition> plugins = new LinkedHashMap<String, ABPluginDefinition>(); 
-	protected boolean mIsRunning=false;
 	protected boolean mPluginIsRunning=false;
 	protected boolean mIsLoading=false;
 	protected ScheduledExecutorService service = null;
 	protected Future<?> future = null;
 	protected long CheckForNewIntervalMS=0;
-	private static URLClassLoader parentClassLoader;
-	private String AllowedKey="";
+	private static ClassLoader parentClassLoader;
+	private static String AllowedKey="";
+	private static boolean PluginOK=false;
+	
+	private static ABPluginDefinition def=null;
+	
+	public boolean AllowOtherKeys=false;
 	
 	public void Initialize(BA ba, String eventName, String pluginsDir, String allowedKey) {
 		this._ba = ba;
 		this._event = eventName.toLowerCase(BA.cul);
 		this.pluginsDir = pluginsDir;
-		this.AllowedKey=allowedKey;
-		parentClassLoader = (java.net.URLClassLoader)Thread.currentThread().getContextClassLoader();
+		AllowedKey=allowedKey;
+		parentClassLoader = Thread.currentThread().getContextClassLoader();
 		File f = new File(pluginsDir);
 		if (!f.exists()) {
 			try {
@@ -72,72 +77,143 @@ public class ABPlugin {
 		return ret;
 	}
 	
-	Runnable runnable = new Runnable() {
-	    public void run() {
-	    	if (mIsRunning && !mPluginIsRunning) {
-	    		mIsLoading=true;
-	    		Map<String, Boolean> toRemove = new LinkedHashMap<String,Boolean>();
-    			List<String> toAdd = new ArrayList<String>();
-    			for (Entry<String,ABPluginDefinition> entry: plugins.entrySet()) {
-    				toRemove.put(entry.getKey(), true);
-    			}	
-    			boolean NeedsReload=false;
-    			File dh = new File(pluginsDir);
-    			for (File f: dh.listFiles()) {
-    				if (f.getName().endsWith(".jar")) {
-    					String pluginName = f.getName().substring(0, f.getName().length()-4).toLowerCase();
-    					toRemove.remove(pluginName);
-    					if (!plugins.containsKey(pluginName)) {
-    						toAdd.add(f.getAbsolutePath());    						
-    					} else {
-    						ABPluginDefinition def = plugins.get(pluginName);
-    						if (f.lastModified()!=def.lastModified) {
-    							toRemove.put(pluginName, true);    							 
-    						}
-    					}
-    				}
-    			}
-    			if (toRemove.size()>0) {
-    				toAdd = new ArrayList<String>();
-    				for (Entry<String,ABPluginDefinition> entry: plugins.entrySet()) {
-    					entry.getValue().objectClass = null;
-    				}
-    				plugins = new LinkedHashMap<String, ABPluginDefinition>();
-    				for (File f: dh.listFiles()) {
-        				if (f.getName().endsWith(".jar")) {
-        					toAdd.add(f.getAbsolutePath());        					
-        				}
-        			}
-    			}
-    			boolean Added = false;
-    			for (int i=0;i<toAdd.size();i++) {	    			
-    				File f = new File(toAdd.get(i));
-    				ABPluginDefinition def = new ABPluginDefinition();
-    				def.lastModified = f.lastModified();
-    				if (loadJarFile(pluginsDir, f, parentClassLoader, def)) {
-    					if (RunInitialize(def)) {
-    						def.NiceName = innerGetNiceName(def);
-    						plugins.put(def.Name.toLowerCase(), def);
-    						Added=true;    						
-    					}
-    				}
-    			}    
-    			
-    			if (NeedsReload || Added) {    						
-    				_ba.raiseEvent(this, _event + "_pluginschanged", new Object[] {});
-    				
-    			}
-    			mIsLoading=false;
-	    	}
-	    }
-	};
+	@RaisesSynchronousEvents
+	public void CheckForNewPlugins() {
+		Map<String, Boolean> toRemove = new LinkedHashMap<String,Boolean>();
+		List<String> toAdd = new ArrayList<String>();
+		for (Entry<String,ABPluginDefinition> entry: plugins.entrySet()) {
+			toRemove.put(entry.getKey(), true);
+		}	
+		boolean NeedsReload=false;
+		File dh = new File(pluginsDir);
+		for (File f: dh.listFiles()) {
+			if (f.getName().endsWith(".jar")) {
+				String pluginName = f.getName().substring(0, f.getName().length()-4).toLowerCase();
+				toRemove.remove(pluginName);
+				if (!plugins.containsKey(pluginName)) {
+					toAdd.add(f.getAbsolutePath());    						
+				} else {
+					ABPluginDefinition def = plugins.get(pluginName);
+					if (f.lastModified()!=def.lastModified) {
+						toRemove.put(pluginName, true);    							 
+					}
+				}
+			}
+		}
+		if (toRemove.size()>0) {
+			toAdd = new ArrayList<String>();
+			for (Entry<String,ABPluginDefinition> entry: plugins.entrySet()) {
+				entry.getValue().objectClass = null;
+			}
+			plugins = new LinkedHashMap<String, ABPluginDefinition>();
+			for (File f: dh.listFiles()) {
+				if (f.getName().endsWith(".jar")) {
+					toAdd.add(f.getAbsolutePath());        					
+				}
+			}
+		}
+		boolean Added = false;
+		for (int i=0;i<toAdd.size();i++) {	    			
+			File f = new File(toAdd.get(i));
+			ABPluginDefinition def = new ABPluginDefinition();
+			def.lastModified = f.lastModified();
+			if (loadJarFile(pluginsDir, f, parentClassLoader, def)) {
+				PluginOK=false;
+				RunInitialize(def);
+				if (PluginOK ){
+					Object ret;
+					if (def.Methods.containsKey("_getnicename")) {			
+						try {
+							ret = def.Methods.get("_getnicename").invoke(def.object, new Object[] {});
+							mPluginIsRunning=false;				
+							def.NiceName = (String)ret;
+						} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+							e.printStackTrace();
+						}				
+					} else {
+						Class<?> clazz = def.objectClass;
+						while (clazz != null) {
+							java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
+						    for (java.lang.reflect.Method method : methods) {		     
+						        if (method.getName().equals("_getnicename")) {
+						        	method.setAccessible(true);
+						        	def.Methods.put("_getnicename", method);
+						        	try {
+										ret = method.invoke(def.object, new Object[] {});
+										mPluginIsRunning=false;
+										clazz = null;
+										def.NiceName = (String)ret;
+									} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+										e.printStackTrace();
+									}						
+						        }
+						    }
+						    if (clazz!=null) {
+						    	clazz = clazz.getSuperclass();
+						    }
+						}
+					}
+					plugins.put(def.Name.toLowerCase(), def);
+					Added=true;    						
+				} else {
+					if (AllowOtherKeys) {
+						Object ret;
+						if (def.Methods.containsKey("_getnicename")) {			
+							try {
+								ret = def.Methods.get("_getnicename").invoke(def.object, new Object[] {});
+								mPluginIsRunning=false;				
+								def.NiceName = (String)ret;
+							} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+								e.printStackTrace();
+							}				
+						} else {
+							Class<?> clazz = def.objectClass;
+							while (clazz != null) {
+								java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
+							    for (java.lang.reflect.Method method : methods) {		     
+							        if (method.getName().equals("_getnicename")) {
+							        	method.setAccessible(true);
+							        	def.Methods.put("_getnicename", method);
+							        	try {
+											ret = method.invoke(def.object, new Object[] {});
+											mPluginIsRunning=false;
+											clazz = null;
+											def.NiceName = (String)ret;
+										} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+											e.printStackTrace();
+										}						
+							        }
+							    }
+							    if (clazz!=null) {
+							    	clazz = clazz.getSuperclass();
+							    }
+							}
+						}
+						plugins.put(def.Name.toLowerCase(), def);
+						Added=true;  
+						//_ba.raiseEvent(this, _event + "_foreignkeyfound", new Object[] {def.NiceName});
+						_ba.raiseEventFromDifferentThread(this, null, 0,  _event + "_foreignkeyfound", false, new Object[] {def.NiceName});
+					}
+				}
+			}
+		}    
+		
+		BA.Log("Active plugins: " + toAdd.size());
+		if (NeedsReload || Added) {
+			//_ba.raiseEvent(this, _event + "_pluginschanged", new Object[] {});
+			_ba.raiseEventFromDifferentThread(this, null, 0,  _event + "_pluginschanged", false, new Object[] {});
+		}
+	}
 	
-	private boolean RunInitialize(ABPluginDefinition def) {				
-		java.lang.reflect.Method m;
-		try {
+	private void RunInitialize(ABPluginDefinition def) {	
+	    java.lang.reflect.Method m;	
+	    try {	
 			m = def.objectClass.getMethod("_initialize", new Class[]{anywheresoftware.b4a.BA.class});
+			BA.Log("Initialize found!");
 			m.setAccessible(true);
-			return (this.AllowedKey==(String) m.invoke(def.object, new Object[] {_ba}));			
+			boolean ret = (AllowedKey==(String) m.invoke(def.object, new Object[] {_ba}));
+			PluginOK = ret;
+			return;	
 		} catch (NoSuchMethodException e) {
 			e.printStackTrace();
 		} catch (SecurityException e) {
@@ -149,12 +225,13 @@ public class ABPlugin {
 		} catch (InvocationTargetException e) {
 			e.printStackTrace();
 		}
-		return false;
+		return;
+		
 	}
 	
 	public Object RunPlugin(String pluginNiceName, String tag, anywheresoftware.b4a.objects.collections.Map params) {		
 		mPluginIsRunning=true;
-		ABPluginDefinition def=null;
+		def=null;
 		for (Entry<String,ABPluginDefinition> entry: plugins.entrySet()) {
 			if (entry.getValue().NiceName.equalsIgnoreCase(pluginNiceName)) {
 				def = entry.getValue();
@@ -166,99 +243,43 @@ public class ABPlugin {
 			mPluginIsRunning=false;
 			return null;
 		}
-		java.lang.reflect.Method m;
-		try {
-			m = GetMethod(def, "_run");
-			if (m==null) {
-				BA.Log("'Sub Run(Tag As String, Params As Map) As Object' not found!");
-				mPluginIsRunning=false;
-				return "";
+		Object ret;
+		if (def.Methods.containsKey("_run")) {			
+			try {
+				ret = def.Methods.get("_run").invoke(def.object, new Object[] {tag, params});
+				def=null;
+				mPluginIsRunning=false;				
+				return ret;
+			} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+				e.printStackTrace();
+			}				
+		} else {
+			Class<?> clazz = def.objectClass;
+			while (clazz != null) {
+				java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
+			    for (java.lang.reflect.Method method : methods) {		     
+			        if (method.getName().equals("_run")) {
+			        	method.setAccessible(true);
+			        	def.Methods.put("_run", method);
+			        	try {
+							ret = method.invoke(def.object, new Object[] {tag, params});
+							def=null;
+							clazz = null;
+							mPluginIsRunning=false;
+							return ret;
+						} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+							e.printStackTrace();
+						}						
+			        }
+			    }
+			    clazz = clazz.getSuperclass();
 			}
-			m.setAccessible(true);
-			Object ret = m.invoke(def.object, new Object[] {tag, params});
-			mPluginIsRunning=false;
-			return ret;		
-		} catch (SecurityException e) {
-			e.printStackTrace();
-		} catch (IllegalAccessException e) {
-			e.printStackTrace();
-		} catch (IllegalArgumentException e) {
-			e.printStackTrace();
-		} catch (InvocationTargetException e) {
-			e.printStackTrace();
-		}	
-		mPluginIsRunning=false;
-		return null;
-	}	
-	
-	protected String innerGetNiceName(ABPluginDefinition def) {		
-		mPluginIsRunning=true;		
-		java.lang.reflect.Method m;
-		try {
-			m = GetMethod(def, "_getnicename");
-			if (m==null) {
-				BA.Log("'Sub GetNiceName() As String' not found!");
-				mPluginIsRunning=false;
-				return "";
-			}
-			m.setAccessible(true);
-			Object ret = m.invoke(def.object, new Object[] {});
-			mPluginIsRunning=false;
-			return (String)ret;		
-		} catch (SecurityException e) {
-			e.printStackTrace();
-		} catch (IllegalAccessException e) {
-			e.printStackTrace();
-		} catch (IllegalArgumentException e) {
-			e.printStackTrace();
-		} catch (InvocationTargetException e) {
-			e.printStackTrace();
-		}	
-		mPluginIsRunning=false;
-		return "";
-	}
-	
-	protected java.lang.reflect.Method GetMethod(ABPluginDefinition def, String methodName) {
-		Class<?> clazz = def.objectClass;
-		while (clazz != null) {
-			java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
-		    for (java.lang.reflect.Method method : methods) {		     
-		        if (method.getName().equals(methodName)) {
-		            return method;
-		        }
-		    }
-		    clazz = clazz.getSuperclass();
 		}
 		return null;
-	}
-	
-	public void Start(long checkForNewIntervalMS) {
-		this.CheckForNewIntervalMS = checkForNewIntervalMS;
-		service = Executors.newSingleThreadScheduledExecutor();
-		future = service.scheduleAtFixedRate(runnable, 0, checkForNewIntervalMS, TimeUnit.MILLISECONDS);
-		mIsRunning = true;
-	}
-	
-	public void Stop() {		
-		if (mIsRunning) {
-			mIsRunning = false;
-			future.cancel(true);
-			service.shutdown();
-		}	
-	}
-	
-	public void Pauze() {
-		if (mIsRunning) {
-			mIsRunning = false;
-			future.cancel(true);
-		}		
-	}
-	
-	public void Resume() {
-		future = service.scheduleAtFixedRate(runnable, 0, CheckForNewIntervalMS, TimeUnit.MILLISECONDS);
 	}	
-	
+		
 	private boolean loadJarFile(String directoryName, File pluginFile, ClassLoader parentClassLoader, ABPluginDefinition def) {
+		BA.Log("Trying to load " + pluginFile.getName());
         URL url = null;
         try {
             url = new URL("jar:file:" + directoryName + "/" + pluginFile.getName() + "!/");
@@ -285,10 +306,12 @@ public class ABPlugin {
             if (entry.isDirectory() || !entry.getName().endsWith(".class")) {
                 continue;
             }
-            classes.add(entry.getName().replace(".class", "").replace('/', '.'));
+            classes.add(entry.getName().replace(".class", "").replace('/', '.'));            
         }
         
         def.objectClass=null;
+        
+        BA.Log("Start loading classes...");
         try (URLClassLoader classLoader = new URLClassLoader(urls, parentClassLoader)) {
         	for (int i=0;i<classes.size();i++) {            		
         		if (classes.get(i).toLowerCase().endsWith(def.Name.toLowerCase())) {
@@ -306,8 +329,8 @@ public class ABPlugin {
             	BA.Log("Attempting to close JAR file: " + eClose);
             	return false;
             }
-        }	     
-                  
+        }
+              
  
         try {
             jarFile.close();
@@ -315,6 +338,7 @@ public class ABPlugin {
         	BA.Log("Attempting to close JAR file: " + e);
         	return false;
         }
+        BA.Log("Loading jar finished");
         return true;
 	}
 
