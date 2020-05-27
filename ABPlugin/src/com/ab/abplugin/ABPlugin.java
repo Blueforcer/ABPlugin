@@ -24,7 +24,6 @@ import java.util.jar.JarFile;
 import anywheresoftware.b4a.BA;
 import anywheresoftware.b4a.BA.Author;
 import anywheresoftware.b4a.BA.DesignerName;
-import anywheresoftware.b4a.BA.Events;
 import anywheresoftware.b4a.BA.RaisesSynchronousEvents;
 import anywheresoftware.b4a.BA.ShortName;
 import anywheresoftware.b4a.BA.Version;
@@ -33,7 +32,7 @@ import anywheresoftware.b4a.BA.Version;
 @Version(1.26F)                                
 @Author("Alain Bailleul")
 @ShortName("ABPlugin") 
-@Events(values={"PluginsChanged()", "ForeignKeyFound(Name as String)"})
+
 public class ABPlugin {	
 	protected BA _ba;
 	protected String _event;
@@ -68,23 +67,14 @@ public class ABPlugin {
 		}				
 	}	
 	
-	public anywheresoftware.b4a.objects.collections.List GetAvailablePlugins() {
-		anywheresoftware.b4a.objects.collections.List ret = new anywheresoftware.b4a.objects.collections.List();
-		ret.Initialize();
-		for (Entry<String,ABPluginDefinition> entry : plugins.entrySet()) {
-			ret.Add(entry.getValue().NiceName);
-		}
-		return ret;
-	}
 	
 	@RaisesSynchronousEvents
-	public void CheckForNewPlugins() {
+	public anywheresoftware.b4a.objects.collections.List CheckForNewPlugins() {
 		Map<String, Boolean> toRemove = new LinkedHashMap<String,Boolean>();
 		List<String> toAdd = new ArrayList<String>();
 		for (Entry<String,ABPluginDefinition> entry: plugins.entrySet()) {
 			toRemove.put(entry.getKey(), true);
 		}	
-		boolean NeedsReload=false;
 		File dh = new File(pluginsDir);
 		for (File f: dh.listFiles()) {
 			if (f.getName().endsWith(".jar")) {
@@ -112,7 +102,7 @@ public class ABPlugin {
 				}
 			}
 		}
-		boolean Added = false;
+		
 		for (int i=0;i<toAdd.size();i++) {	    			
 			File f = new File(toAdd.get(i));
 			ABPluginDefinition def = new ABPluginDefinition();
@@ -153,8 +143,7 @@ public class ABPlugin {
 						    }
 						}
 					}
-					plugins.put(def.Name.toLowerCase(), def);
-					Added=true;    						
+					plugins.put(def.Name.toLowerCase(), def); 						
 				} else {
 					if (AllowOtherKeys) {
 						Object ret;
@@ -189,27 +178,26 @@ public class ABPlugin {
 							    }
 							}
 						}
-						plugins.put(def.Name.toLowerCase(), def);
-						Added=true;  
-						//_ba.raiseEvent(this, _event + "_foreignkeyfound", new Object[] {def.NiceName});
-						_ba.raiseEventFromDifferentThread(this, null, 0,  _event + "_foreignkeyfound", false, new Object[] {def.NiceName});
+						plugins.put(def.Name.toLowerCase(), def); 
 					}
 				}
 			}
 		}    
 		
-		BA.Log("Active plugins: " + toAdd.size());
-		if (NeedsReload || Added) {
+		BA.Log("Active Apps: " + toAdd.size());	
 			//_ba.raiseEvent(this, _event + "_pluginschanged", new Object[] {});
-			_ba.raiseEventFromDifferentThread(this, null, 0,  _event + "_pluginschanged", false, new Object[] {});
+		anywheresoftware.b4a.objects.collections.List ret = new anywheresoftware.b4a.objects.collections.List();
+		ret.Initialize();
+		for (Entry<String,ABPluginDefinition> entry : plugins.entrySet()) {
+			ret.Add(entry.getValue().NiceName);
 		}
+		return ret;
 	}
 	
 	private void RunInitialize(ABPluginDefinition def) {	
 	    java.lang.reflect.Method m;	
 	    try {	
 			m = def.objectClass.getMethod("_initialize", new Class[]{anywheresoftware.b4a.BA.class});
-			BA.Log("Initialize found!");
 			m.setAccessible(true);
 			boolean ret = (AllowedKey==(String) m.invoke(def.object, new Object[] {_ba}));
 			PluginOK = ret;
@@ -239,7 +227,7 @@ public class ABPlugin {
 			}
 		}		
 		if (def==null) {
-			BA.Log("No plugin found with name: '" + pluginNiceName + "'");
+			BA.Log("No App found with name: '" + pluginNiceName + "'");
 			mPluginIsRunning=false;
 			return null;
 		}
@@ -279,7 +267,7 @@ public class ABPlugin {
 	}	
 		
 	private boolean loadJarFile(String directoryName, File pluginFile, ClassLoader parentClassLoader, ABPluginDefinition def) {
-		BA.Log("Trying to load " + pluginFile.getName());
+		BA.Log("AWTRIX App " + pluginFile.getName() + " found");
         URL url = null;
         try {
             url = new URL("jar:file:" + directoryName + "/" + pluginFile.getName() + "!/");
@@ -311,7 +299,7 @@ public class ABPlugin {
         
         def.objectClass=null;
         
-        BA.Log("Start loading classes...");
+        
         try (URLClassLoader classLoader = new URLClassLoader(urls, parentClassLoader)) {
         	for (int i=0;i<classes.size();i++) {            		
         		if (classes.get(i).toLowerCase().endsWith(def.Name.toLowerCase())) {
@@ -338,7 +326,7 @@ public class ABPlugin {
         	BA.Log("Attempting to close JAR file: " + e);
         	return false;
         }
-        BA.Log("Loading jar finished");
+        BA.Log("Loading Apps finished");
         return true;
 	}
 
